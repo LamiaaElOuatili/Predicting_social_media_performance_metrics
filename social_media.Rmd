@@ -1,0 +1,1510 @@
+---
+title: "Linear Regression Project: Predicting Social Media Performance 
+Metrics and Evaluation of the Impact on Brand Building"
+subtitle: "Full analisis"
+author: "Lamiaa EL OUATILI"
+date: "2024-12-15"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# I. Introduction
+
+This project aims to explore the relationships between various input
+features and target variables in a social media dataset. By leveraging
+regression techniques, we aim to identify the most predictive variables
+for user engagement metrics. The primary objectives include:
+
+1.  Handling missing values in the dataset to maintain its integrity.
+2.  Addressing outliers for robust analysis.
+3.  Exploring variable transformations to enhance model accuracy.
+4.  Developing predictive models using advanced regression techniques
+    such as Lasso and stepwise regression.
+
+# II. Dataset Preparation
+
+The dataset consists of multiple variables, including predictors and
+target metrics related to user interactions such as likes, comments,
+shares, and engagement rates. Initial preprocessing included handling
+null values and addressing outliers to ensure the dataset's suitability
+for regression analysis.
+
+```{r}
+tab <- read.csv("dataset.csv", sep = ";")
+dim(tab)
+head(tab)
+```
+
+### 1. Null Value Analysis
+
+We started by identifying and handling missing values within the
+dataset. Missing values were summarized and visualized using bar plots
+for a clear understanding of their distribution.
+
+```{r}
+# Counting missing values
+sum_null_values <- function(data) {
+  total_nulls <- sum(is.na(data))
+  cat("Number of null values is:", total_nulls, "\n")
+}
+sum_null_values(tab)
+
+
+```
+
+Visualizing missing values
+
+```{r}
+# Visualizing missing values
+library(ggplot2)
+missing_summary <- colSums(is.na(tab))
+missing_df <- data.frame(Column = names(missing_summary), MissingCount = missing_summary)
+
+ggplot(missing_df, aes(x = reorder(Column, -MissingCount), y = MissingCount)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Missing Values by Column", x = "Columns", y = "Count of Missing Values") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Treatment:
+
+Rows with missing values in the share column were removed to ensure no
+critical information was lost. Missing values in the paid column were
+imputed with 0, reflecting the most frequent value for this feature.
+
+```{r}
+# We removed the rows where share is NULL.
+tab <- subset(tab, !is.na(share))
+
+# We imputed the 'paid' missing value with the frequent one.
+tab$Paid[is.na(tab$Paid)] <- 0
+```
+
+### 2. Outlier Detection and Handling
+
+Outliers were identified using the Mahalanobis distance approach. A
+threshold of the 95th percentile was applied to filter out extreme
+observations, representing the top 5% of outliers.
+
+```{r}
+### 2. Outlier Detection and Handling
+
+# Boxplots for Outliers Representation
+
+# Set the plotting area into a grid (3 rows, 4 columns)
+par(mfrow = c(3, 4), mar = c(4, 4, 2, 1))  # Adjust margins as needed
+
+# Plot boxplots for each variable
+boxplot(tab$Lifetime.Post.Total.Reach, main = "Lifetime.Post.Total.Reach", col = "red")
+boxplot(tab$Lifetime.Post.Total.Impressions, main = "Lifetime.Post.Total.Impressions", col = "green")
+boxplot(tab$Lifetime.Engaged.Users, main = "Lifetime.Engaged.Users", col = "blue")
+boxplot(tab$Lifetime.Post.Consumers, main = "Lifetime.Post.Consumers", col = "purple")
+boxplot(tab$Lifetime.Post.Consumptions, main = "Lifetime.Post.Consumptions", col = "orange")
+
+boxplot(tab$Lifetime.Post.Impressions.by.people.who.have.liked.your.Page, 
+        main = "Lifetime.Post.Impressions.by.people", col = "brown")
+
+boxplot(tab$Lifetime.Post.reach.by.people.who.like.your.Page, 
+        main = "Lifetime.Post.reach.by.people", col = "pink")
+
+boxplot(tab$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post, 
+        main = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post", col = "darkgreen")
+
+boxplot(tab$comment, main = "Comment", col = "cyan")
+boxplot(tab$share, main = "Share", col = "yellow")
+boxplot(tab$like, main = "Like", col = "grey")
+
+boxplot(tab$Total.Interactions, main = "Total.Interactions", col = "black")
+
+# Reset the plotting area back to default (1 plot per page)
+par(mfrow = c(1, 1))
+
+```
+
+Another way to look at outliers would be like this:
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+
+# Subset numeric columns from the dataset
+numeric_cols <- tab[, sapply(tab, is.numeric)]
+
+# Convert numeric columns to long format
+numeric_long <- melt(numeric_cols, variable.name = "variable", value.name = "value")
+
+# Boxplot visualization
+ggplot(numeric_long, aes(x = variable, y = value)) +
+  geom_boxplot(alpha = 0.7, outlier.colour = "red", outlier.shape = 1, fill = "skyblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Boxplots of Features Highlighting Outliers", x = "Features", y = "Values")
+
+```
+
+We can clearly see that we need to handle some outliers and we will do
+so by calculating the mahalanobis distance.
+
+```{r}
+
+library(dplyr)
+
+calculate_mahalanobis <- function(data) {
+  
+  numeric_data <- data[, sapply(data, is.numeric)]
+  
+  cov_matrix <- cov(numeric_data, use = "complete.obs")  # Covariance matrix
+  center <- colMeans(numeric_data, na.rm = TRUE)         # Mean of each column
+  mahal <- mahalanobis(numeric_data, center, cov_matrix) # Mahalanobis distance
+  return(mahal)
+}
+
+predictors <- tab[, 1:7]     # Subset predictors
+targets <- tab[, 8:19]       # Subset target variables
+
+all_variables <- cbind(predictors, targets)
+
+all_variables <- all_variables[, setdiff(colnames(all_variables), "Total.Interactions")]
+
+outlier_scores <- calculate_mahalanobis(all_variables)
+
+tab$outlier_score <- outlier_scores
+
+threshold <- quantile(outlier_scores, 0.95)
+
+tab <- tab %>% filter(outlier_score <= threshold)
+
+tab <- dplyr::select(tab, -outlier_score)
+
+dim(tab)
+
+
+```
+
+### 3. Variable Transformation
+
+Categorical variables like Type and Category were encoded into numerical
+representations using one-hot encoding, allowing their inclusion in the
+regression models.
+
+```{r}
+# Encoding categorical variables
+dummy_vars <- model.matrix(~ Type - 1, data = tab)
+tab <- cbind(tab, dummy_vars)
+head(tab)
+
+
+tab$Category <- as.factor(tab$Category)
+dummy_vars <- model.matrix(~ Category - 1, data = tab)
+tab <- cbind(tab, dummy_vars)
+head(tab)
+
+```
+
+# III. Data Visualization
+
+We visualized the distribution of variables before and after outlier
+handling using scatter plots for each feature. These visualizations help
+highlight the impact of removing extreme values.
+
+```{r}
+# Scatter plots for selected features
+par(mfrow = c(3, 4), mar = c(4, 4, 2, 1))
+plot(tab$Lifetime.Post.Total.Reach, main = "Lifetime.Post.Total.Reach", col = "red")
+plot(tab$Lifetime.Post.Total.Impressions, main = "Lifetime.Post.Total.Impressions", col = "green")
+plot(tab$Lifetime.Post.Total.Impressions, main = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post", col = "blue")
+
+
+```
+
+We can also visualize the post distribution type
+
+```{r}
+# Load required libraries
+library(ggplot2)
+
+# Create a frequency table for post types
+post_type_counts <- table(tab$Type)
+
+# Convert to data frame for ggplot
+post_type_df <- as.data.frame(post_type_counts)
+colnames(post_type_df) <- c("Type", "Count")
+
+# Bar Chart for Post Type Distribution
+ggplot(post_type_df, aes(x = Type, y = Count, fill = Type)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Post Type Distribution", x = "Post Type", y = "Count") +
+  theme(legend.position = "none")
+
+```
+
+We can also notice that likes are the most abundant form of engagement:
+
+```{r}
+
+# Summarize engagement metrics by post type
+engagement_summary <- aggregate(cbind(Likes = tab$like, Comments = tab$comment, Shares = tab$share) ~ Type, data = tab, FUN = mean)
+
+# Reshape data for ggplot (long format)
+library(reshape2)
+engagement_long <- melt(engagement_summary, id.vars = "Type", variable.name = "Metric", value.name = "Average")
+
+# Bar Chart for Engagement vs. Post Type
+ggplot(engagement_long, aes(x = Type, y = Average, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Engagement vs. Post Type", x = "Post Type", y = "Average Engagement") +
+  scale_fill_brewer(palette = "Set1")
+
+```
+
+It's also interesting to look at the engagement trends by month.
+
+```{r}
+# Engagement trend by Post.Month
+monthly_trend <- aggregate(cbind(Likes = tab$like, Comments = tab$comment, Shares = tab$share) ~ Post.Month, data = tab, FUN = mean)
+
+# Reshape for ggplot
+monthly_long <- melt(monthly_trend, id.vars = "Post.Month", variable.name = "Metric", value.name = "Average")
+
+# Line plot
+ggplot(monthly_long, aes(x = Post.Month, y = Average, color = Metric)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  theme_minimal() +
+  labs(title = "Engagement Trends by Month", x = "Post Month", y = "Average Engagement") +
+  scale_color_brewer(palette = "Set1")
+
+```
+
+And finally, we can get an idea of the post frequency by hour and
+weekday:
+
+```{r}
+# Create a frequency table
+timing_table <- as.data.frame(table(tab$Post.Hour, tab$Post.Weekday))
+colnames(timing_table) <- c("Post.Hour", "Post.Weekday", "Frequency")
+
+# Heatmap
+ggplot(timing_table, aes(x = Post.Weekday, y = Post.Hour, fill = Frequency)) +
+  geom_tile() +
+  theme_minimal() +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Post Frequency by Hour and Weekday", x = "Post Weekday", y = "Post Hour", fill = "Frequency")
+```
+
+# IV. Model
+
+## 1. Linear Regression with Stepwise Selection
+
+-   Loops over the target variables (outputs) to create models using lm
+    and applies stepwise selection with the step function.
+-   Outputs the model summaries, adjusted R2R2, and AICAIC.
+
+```{r}
+
+inputs <- c("Page.total.likes", "Post.Month", "Post.Weekday", "Post.Hour", "Paid", "TypeLink","TypePhoto", "TypeStatus", "TypeVideo", "Category1", "Category2", "Category3")
+
+outputs <- c("Lifetime.Post.Total.Reach", "Lifetime.Post.Total.Impressions", 
+             "Lifetime.Engaged.Users", "Lifetime.Post.Consumers", 
+             "Lifetime.Post.Consumptions", "Lifetime.Post.Impressions.by.people.who.have.liked.your.Page", 
+             "Lifetime.Post.reach.by.people.who.like.your.Page", 
+             "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post", 
+             "comment", "like", "share", "Total.Interactions")
+
+```
+
+```{r}
+library(ggplot2)
+
+tab_1 <- tab
+
+# List to store R^2 values
+r_squared_values <- data.frame(Target = character(), R2 = numeric(), stringsAsFactors = FALSE)
+
+for (cible in outputs) {
+  
+  # Normalize the target variable using Min-Max scaling
+  tab_1[[cible]] <- (tab_1[[cible]] - min(tab_1[[cible]])) / (max(tab_1[[cible]]) - min(tab_1[[cible]]))
+  
+  # Build the formula
+  formule <- as.formula(paste(cible, "~", paste(inputs, collapse = " + ")))
+  
+  # Fit the linear model
+  modele <- lm(formule, data = tab_1)
+  
+  # Calculate R-squared
+  r_squared <- summary(modele)$r.squared
+  
+  # Store R-squared value
+  r_squared_values <- rbind(r_squared_values, data.frame(Target = cible, R2 = r_squared))
+  
+  # Print the summary to the console
+  cat("\nRésumé pour la variable cible :", cible, "\n")
+  print(summary(modele))
+}
+
+# Visualize R-squared values with rotated x-axis labels
+ggplot(r_squared_values, aes(x = Target, y = R2)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "R-squared Values for Linear Models", x = "Target Variables", y = "R-squared") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  
+
+```
+
+```{r}
+
+# Initialize a data frame to store results
+results <- data.frame(Target = character(), Adjusted_R2 = numeric(), stringsAsFactors = FALSE)
+
+for (cible in outputs) {
+  
+  # Define the full formula with all inputs
+  formule <- as.formula(paste(cible, "~", paste(inputs, collapse = " + ")))
+  
+  # Build the initial linear model with all inputs
+  full_model <- lm(formule, data = tab_1)
+  
+  # Perform stepwise regression
+  stepwise_model <- step(full_model, direction = "both", trace = FALSE)
+  
+  # Extract the adjusted R-squared
+  adjusted_r2 <- summary(stepwise_model)$adj.r.squared
+  
+  # Store the result
+  results <- rbind(results, data.frame(Target = cible, Adjusted_R2 = adjusted_r2))
+  
+  # Display the summary of the final stepwise-selected model
+  cat("\nStepwise Regression Summary for Target Variable:", cible, "\n")
+  print(summary(stepwise_model))
+}
+
+# Visualize Adjusted R-squared values
+library(ggplot2)
+
+ggplot(results, aes(x = Target, y = Adjusted_R2)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Adjusted R-squared Values for Stepwise Regression Models", 
+       x = "Target Variables", 
+       y = "Adjusted R-squared") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+## 2. Enhanced Evaluation with Cross-Validation
+
+-   Uses the caret package for 10-fold cross-validation to evaluate
+    stepwise models.
+-   Captures performance metrics:
+-   Adjusted R2R2, -Root Mean Squared
+-   Error (RMSE), Akaike Information Criterion (AIC).
+-   Visualizes RMSE across targets using a boxplot.
+
+-\> We start by defining the normalization function for the target
+variables. The normalization will help in the comparison :
+
+```{r}
+# Function to normalize a vector (standardization)
+normalize_vector <- function(x) {
+  return((x - mean(x)) / sd(x))
+}
+```
+
+```{r}
+
+library(caret)  # For cross-validation
+
+tab_2 <- tab
+
+
+# Function to perform stepwise regression and cross-validation with normalized targets
+compare_models <- function(tab, inputs, outputs) {
+  
+  # Store results for comparison
+  results <- data.frame(
+    Target = character(),
+    Adjusted_R2 = numeric(),
+    RMSE = numeric(),
+    AIC = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  # List to store models' RMSE performance for visualization
+  model_performance <- list()
+  
+  for (cible in outputs) {
+    
+    # Normalize the target variable
+    tab$Normalized_Target <- normalize_vector(tab[[cible]])
+    
+    # Define the formula with normalized target and all inputs
+    formule <- as.formula(paste("Normalized_Target ~", paste(inputs, collapse = " + ")))
+    
+    # Build the initial linear model with all inputs
+    full_model <- lm(formule, data = tab)
+    
+    # Perform stepwise regression
+    stepwise_model <- step(full_model, direction = "both", trace = FALSE)
+    
+    # Summary of the final model
+    cat("\nStepwise Regression Summary for Target Variable:", cible, "\n")
+    print(summary(stepwise_model))
+    
+    # Perform k-fold cross-validation (10-fold)
+    set.seed(123)  # For reproducibility
+    train_control <- trainControl(method = "cv", number = 10)
+    cv_model <- train(
+      formula(stepwise_model),
+      data = tab,
+      method = "lm",
+      trControl = train_control
+    )
+    
+    # Extract performance metrics
+    adj_r2 <- summary(stepwise_model)$adj.r.squared
+    aic <- AIC(stepwise_model)
+    rmse <- mean(cv_model$resample$RMSE)
+    
+    # Store the results
+    results <- rbind(results, data.frame(
+      Target = cible,
+      Adjusted_R2 = adj_r2,
+      RMSE = rmse,
+      AIC = aic
+    ))
+    
+    # Add RMSE performance for visualization
+    model_performance[[cible]] <- data.frame(
+      Fold = 1:10,
+      RMSE = cv_model$resample$RMSE,
+      Target = cible
+    )
+  }
+  
+  # Combine all performance data for visualization
+  performance_data <- do.call(rbind, model_performance)
+  
+  # Return both summary results and performance data
+  list(summary = results, performance_data = performance_data)
+}
+
+
+results_data <- compare_models(tab = tab_2, inputs = inputs, outputs = outputs)
+
+
+# Extract the summary results and performance data
+results <- results_data$summary
+performance_data <- results_data$performance_data
+
+# View the results
+print(results)
+
+
+
+library(ggplot2)
+
+# Plot RMSE for each target variable with rotated labels
+ggplot(performance_data, aes(x = Target, y = RMSE, color = Target)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Model RMSE Comparison Across Targets",
+    x = "Target Variable",
+    y = "RMSE"
+  ) +
+  theme(
+    legend.position = "none",                # Remove legend if not needed
+    axis.text.x = element_text(angle = 45, hjust = 1)  # Rotate x-axis labels
+  )
+
+
+
+```
+
+## 3. Lasso Regression
+
+-   Implements Lasso regression using glmnet:
+
+    -   Standardizes inputs for compatibility.
+
+    -   Selects the optimal regularization parameter (λλ) using
+        cross-validation.
+
+-   Calculates and stores:
+
+    -   Adjusted R2R2,
+
+    -   Coefficients,
+
+    -   Best λλ.
+
+    -   Bar plot visualization of Adjusted R2R2 across targets.
+
+```{r}
+
+perform_lasso_all <- function(data, inputs, outputs) {
+  
+  library(glmnet)
+  
+  # Initialize a list to store results for each target variable
+  lasso_results <- list()
+  
+  for (target in outputs) {
+    # Convert categorical variables to dummy variables and prepare the design matrix
+    x <- model.matrix(~ . - 1, data = data[, inputs, drop = FALSE])
+    y <- normalize_vector(data[[target]])
+    
+    # Perform Lasso regression with cross-validation
+    set.seed(123)  # For reproducibility
+    lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE)
+    
+    # Best lambda from cross-validation
+    best_lambda <- lasso_cv$lambda.min
+    
+    # Fit the final Lasso model
+    lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, standardize = TRUE)
+    
+    # Calculate Adjusted R-squared
+    predictions <- predict(lasso_model, s = best_lambda, newx = x)
+    residuals <- y - predictions
+    rss <- sum(residuals^2)  # Residual sum of squares
+    tss <- sum((y - mean(y))^2)  # Total sum of squares
+    r_squared <- 1 - (rss / tss)
+    adjusted_r_squared <- 1 - ((1 - r_squared) * (length(y) - 1) / (length(y) - ncol(x) - 1))
+    
+    # Store metrics and model details in the list
+    lasso_results[[target]] <- list(
+      best_lambda = best_lambda,
+      r_squared = r_squared,
+      adjusted_r_squared = adjusted_r_squared,
+      coefficients = coef(lasso_model, s = best_lambda)
+    )
+  }
+  
+  return(lasso_results)
+}
+
+
+lasso_results <- perform_lasso_all(data = tab, inputs = inputs, outputs = outputs)
+
+# Visualize the Adjusted R-squared
+adjusted_r2_df <- data.frame(
+  Target = names(lasso_results),
+  Adjusted_R2 = sapply(lasso_results, function(res) res$adjusted_r_squared)
+)
+
+print(adjusted_r2_df)  # Check values
+
+# Plot Adjusted R-Squared
+ggplot(adjusted_r2_df, aes(x = Target, y = Adjusted_R2, fill = Target)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Lasso Regression Adjusted R-Squared Across Targets",
+    x = "Target Variable",
+    y = "Adjusted R-Squared"
+  ) +
+  guides(fill = "none")
+```
+
+## 4. Cross-Validation Error Analysis
+
+-   Extends Lasso to analyze cross-validation error (CV_ErrorCV_Error)
+    over a range of λλ values.
+-   Visualizes CV_ErrorCV_Error for all targets using: -Log-scaled
+    x-axis for λλ, -Distinct colors and line types for each target.
+
+```{r}
+# CROSS VALIDATION 
+
+perform_lasso_all_cv_error <- function(data, inputs, outputs) {
+  library(glmnet)
+  library(ggplot2)
+  
+  # Initialize a list to store results for each target variable
+  lasso_results <- list()
+  cv_errors <- data.frame(Target = character(), Lambda = numeric(), CV_Error = numeric())
+  
+  for (target in outputs) {
+    # Convert categorical variables to dummy variables and prepare the design matrix
+    x <- model.matrix(~ . - 1, data = data[, inputs, drop = FALSE])
+    y <- normalize_vector(data[[target]])
+    
+    # Perform Lasso regression with cross-validation
+    set.seed(123)  # For reproducibility
+    lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE)
+    
+    # Best lambda from cross-validation
+    best_lambda <- lasso_cv$lambda.min
+    
+    # Fit the final Lasso model
+    lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, standardize = TRUE)
+    
+    # Calculate Adjusted R-squared
+    predictions <- predict(lasso_model, s = best_lambda, newx = x)
+    residuals <- y - predictions
+    rss <- sum(residuals^2)  # Residual sum of squares
+    tss <- sum((y - mean(y))^2)  # Total sum of squares
+    r_squared <- 1 - (rss / tss)
+    adjusted_r_squared <- 1 - ((1 - r_squared) * (length(y) - 1) / (length(y) - ncol(x) - 1))
+    
+    # Store metrics and model details in the list
+    lasso_results[[target]] <- list(
+      best_lambda = best_lambda,
+      r_squared = r_squared,
+      adjusted_r_squared = adjusted_r_squared,
+      coefficients = coef(lasso_model, s = best_lambda)
+    )
+    
+    # Store cross-validation errors for visualization
+    cv_errors <- rbind(cv_errors, data.frame(
+      Target = target,
+      Lambda = lasso_cv$lambda,
+      CV_Error = lasso_cv$cvm
+    ))
+  }
+  
+  # Return the results
+  list(lasso_results = lasso_results, cv_errors = cv_errors)
+}
+
+# Apply the function
+lasso_results_cv <- perform_lasso_all_cv_error(data = tab, inputs = inputs, outputs = outputs)
+
+# Extract the cross-validation error data
+cv_errors_df <- lasso_results_cv$cv_errors
+
+
+# Define a custom color palette for better distinction
+custom_colors <- RColorBrewer::brewer.pal(n = length(unique(cv_errors_df$Target)), name = "Set3")
+
+# Plot with distinct colors and line types
+ggplot(cv_errors_df, aes(x = Lambda, y = CV_Error, color = Target, linetype = Target)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  scale_color_manual(values = custom_colors) +  # Apply custom colors
+  theme_minimal() +
+  scale_x_log10() +  # Log scale for lambda
+  labs(
+    title = "Cross-Validation Error Across Lambda for Each Target Variable",
+    x = "Lambda (Log Scale)",
+    y = "Cross-Validation Error"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 8)
+  )
+
+```
+
+## 5. Identifying Top 5 Variables with Lowest Cross-Validation Error
+
+The goal here is to identify the top 5 target variables with the lowest
+cross-validation (CV) errors from a dataset of CV results. The process
+involves the following steps:
+
+1.  Extract Minimum CV Error for Each Target Variable: Using the sapply
+    function, the minimum CV error for each target variable is
+    identified.
+
+2.  Filter the Top 5 Target Variables: The target variables are sorted
+    based on their CV errors, and the top 5 with the lowest errors are
+    selected.
+
+3.  Visualizing the Cross-Validation Errors: A line plot is generated to
+    visualize the CV errors across lambda values for the selected top 5
+    target variables. A custom color palette is applied for clear
+    distinction between the variables.
+
+```{r}
+cv_errors_min <- sapply(unique(cv_errors_df$Target), function(target) {
+  min(cv_errors_df$CV_Error[cv_errors_df$Target == target])
+})
+
+# Sort and select the top 5 target variables with the lowest error
+top_5_targets <- names(sort(cv_errors_min))[1:5]
+
+# Step 2: Filter cv_errors_df to keep only these top 5 target variables
+filtered_cv_errors_df <- cv_errors_df[cv_errors_df$Target %in% top_5_targets, ]
+
+# Step 3: Plot the cross-validation errors for the top 5 variables
+# Define a custom color palette for better distinction
+custom_colors <- RColorBrewer::brewer.pal(n = 5, name = "Set1")  # Use 5 distinct colors
+
+ggplot(filtered_cv_errors_df, aes(x = Lambda, y = CV_Error, color = Target, linetype = Target)) +
+  geom_line(size = 1) +  # Increase line size for better visibility
+  scale_color_manual(values = custom_colors) +  # Apply custom colors
+  scale_x_log10() +  # Log scale for lambda
+  labs(
+    title = "Cross-Validation Error Across Lambda for Top 5 Target Variables",
+    x = "Lambda (Log Scale)",
+    y = "Cross-Validation Error"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 8)
+  )
+```
+
+## 6. Performing Lasso Regression and Calculating RMSE
+
+A custom function, perform_lasso_all_rmse, is created to automate Lasso
+regression for multiple target variables. This process involves:
+
+1.  Lasso Regression with Cross-Validation The function performs Lasso
+    regression on each target variable, using cross-validation to
+    determine the optimal lambda.
+
+2.  Calculating RMSE The RMSE (Root Mean Squared Error) is computed for
+    each target variable to evaluate model performance.
+
+3.  Storing Results Results for each target variable, including the
+    optimal lambda, RMSE, and model coefficients, are stored for further
+    analysis.
+
+```{r}
+
+perform_lasso_all_rmse <- function(data, inputs, outputs) {
+  library(glmnet)
+  
+  # Initialize a list to store results for each target variable
+  lasso_results <- list()
+  rmse_values <- data.frame(Target = character(), RMSE = numeric())
+  
+  for (target in outputs) {
+    # Convert categorical variables to dummy variables and prepare the design matrix
+    x <- model.matrix(~ . - 1, data = data[, inputs, drop = FALSE])
+    y <- normalize_vector(data[[target]])
+    
+    # Perform Lasso regression with cross-validation
+    set.seed(123)  # For reproducibility
+    lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE)
+    
+    # Best lambda from cross-validation
+    best_lambda <- lasso_cv$lambda.min
+    
+    # Fit the final Lasso model
+    lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, standardize = TRUE)
+    
+    # Calculate RMSE
+    predictions <- predict(lasso_model, s = best_lambda, newx = x)
+    residuals <- y - predictions
+    rmse <- sqrt(mean(residuals^2))  # Root Mean Squared Error
+    
+    # Store metrics and model details in the list
+    lasso_results[[target]] <- list(
+      best_lambda = best_lambda,
+      rmse = rmse,
+      coefficients = coef(lasso_model, s = best_lambda)
+    )
+    
+    # Store RMSE values for visualization
+    rmse_values <- rbind(rmse_values, data.frame(
+      Target = target,
+      RMSE = rmse
+    ))
+  }
+  
+  # Return the results
+  list(lasso_results = lasso_results, rmse_values = rmse_values)
+}
+
+# Apply the function
+lasso_results_rmse <- perform_lasso_all_rmse(data = tab, inputs = inputs, outputs = outputs)
+
+# Extract the RMSE values
+rmse_df <- lasso_results_rmse$rmse_values
+
+# Sort the targets by RMSE (ascending order) and select the top 5
+top_5_rmse_targets <- rmse_df[order(rmse_df$RMSE),][1:5,]
+
+# Print the RMSE values for the top 5 targets
+print(top_5_rmse_targets)
+
+
+```
+
+## 7. Analyzing RMSE for Top 5 Target Variables
+
+The RMSE values are extracted, sorted, and visualized to highlight the
+top 5 target variables with the lowest RMSE:
+
+1.  Top 5 Target Variables by RMSE: The variables with the smallest RMSE
+    values are identified and presented in a table.
+
+2.  Bar Plot for RMSE Values: A horizontal bar plot is created to
+    visualize and compare the RMSE values of the top 5 target variables.
+    This allows for easy interpretation of model performance.
+
+```{r}
+
+# Plot the RMSE values for the top 5 target variables
+library(ggplot2)
+
+ggplot(top_5_rmse_targets, aes(x = reorder(Target, RMSE), y = RMSE, fill = Target)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +  # Flip the axis for better readability
+  theme_minimal() +
+  labs(
+    title = "RMSE Across Top 5 Target Variables",
+    x = "Target Variable",
+    y = "Root Mean Squared Error (RMSE)"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 8.Checking the residuals :
+
+```{r}
+
+# Modified function with correct data frame handling
+plot_lasso_diagnostics <- function(data, inputs, target) {
+    # Prepare data
+    x <- model.matrix(~ . - 1, data = data[, inputs, drop = FALSE])
+    y <- data[[target]]
+    
+    # Fit model
+    set.seed(123)
+    lasso_cv <- cv.glmnet(x, y, alpha = 1, standardize = TRUE)
+    best_lambda <- lasso_cv$lambda.min
+    lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lambda, standardize = TRUE)
+    
+    # Get predictions and residuals
+    predictions <- as.vector(predict(lasso_model, s = best_lambda, newx = x))  # Convert to vector
+    residuals <- as.vector(y - predictions)  # Convert to vector
+    
+    # Create data frame for plotting
+    plot_df <- data.frame(
+        Actual = as.vector(y),
+        Predicted = predictions,
+        Residuals = residuals
+    )
+    
+    # Create plots
+    # 1. QQ Plot
+    p1 <- ggplot(data = plot_df, aes(sample = Residuals)) +
+        stat_qq() +
+        stat_qq_line(color = "red") +
+        theme_minimal() +
+        labs(title = "Normal Q-Q Plot of Residuals")
+    
+    # 2. Predicted vs Actual Values
+    p2 <- ggplot(data = plot_df, aes(x = Actual, y = Predicted)) +
+        geom_point(alpha = 0.5) +
+        geom_abline(intercept = 0, slope = 1, color = "red") +
+        theme_minimal() +
+        labs(title = "Predicted vs Actual Values",
+             x = "Actual Values",
+             y = "Predicted Values")
+    
+    # 3. Residuals vs Actual Values
+    p3 <- ggplot(data = plot_df, aes(x = Actual, y = Residuals)) +
+        geom_point(alpha = 0.5) +
+        geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+        theme_minimal() +
+        labs(title = "Residuals vs Actual Values",
+             x = "Actual Values",
+             y = "Residuals")
+    
+    # Arrange plots
+    library(gridExtra)
+    grid.arrange(p1, p2, p3, ncol = 2)
+  
+    # Calculate and print R-squared
+    r_squared <- 1 - sum(residuals^2) / sum((y - mean(y))^2)
+    print(paste("R-squared:", round(r_squared, 4)))
+}
+
+# Use the function
+plot_lasso_diagnostics(data = tab, 
+                      inputs = inputs, 
+                      target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post")
+```
+
+**Observations :** - The Normal Q-Q plot (top left) shows significant
+deviation from normality, especially in the tails where there's a clear
+upward curve pattern. This suggests the residuals are not normally
+distributed.
+
+-   The Predicted vs Actual Values plot (top right) shows considerable
+    scatter around the red diagonal line, particularly for higher
+    values. The spread increases with larger values, indicating
+    potential heteroscedasticity.
+
+-   The Residuals vs Actual Values plot (bottom) reveals a concerning
+    upward trend and fan-shaped pattern. The residuals get larger and
+    more spread out as the actual values increase, strongly suggesting
+    heteroscedasticity and possibly indicating that a non-linear model
+    might be more appropriate.
+
+```{r}
+plot_lasso_diagnostics(data = tab, 
+                      inputs = inputs, 
+                      target = "Lifetime.Post.Consumers")
+```
+
+```{r}
+plot_lasso_diagnostics(data = tab, 
+                      inputs = inputs, 
+                      target = "Lifetime.Engaged.Users")
+```
+
+-\> These plots for the three variables suggest the current linear model
+may not be optimal for this data, as it violates several key regression
+assumptions including normality of residuals and homoscedasticity.
+
+## 9. Transformation of the target variables with log(x+1) :
+
+We apply a log transformation (specifically log(x + 1)) to three chosen
+variables.
+
+```{r}
+tab2 <- tab
+
+tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post <- log1p(tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post)  # log1p() is log(x + 1)
+tab2$Lifetime.Post.Consumers <- log1p(tab2$Lifetime.Post.Consumers)
+tab2$Lifetime.Engaged.Users <- log1p(tab2$Lifetime.Engaged.Users)
+```
+
+The log1p() function is used instead of a simple log() because it
+computes log(x + 1), which is useful when your data might contain zeros
+(since log(0) is undefined). This transformation is used to handle
+right-skewed data, reduce the impact of extreme values, make
+relationships more linear, stabilize variance in the data.
+
+##10. Removing the outlyers :
+
+We calculated the Interquartile Range (IQR) and used it to define
+outlier boundaries using the common 1.5IQR rule (values beyond Q1-1.5IQR
+and Q3+1.5\*IQR are considered outliers).
+
+The data was filtered to remove these outliers :
+
+```{r}
+
+hist(tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post)
+
+# Calculer les limites avec IQR
+Q1 <- quantile(tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post, 0.25)
+Q3 <- quantile(tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filtrer les données
+tab2_clean <- tab2[tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post >= lower_bound & 
+                     tab2$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post <= upper_bound, ]
+
+hist(tab2_clean$Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post, main="Log Transformed Distribution", xlab="Log(Values + 1)")
+
+```
+
+```{r}
+hist(tab2$Lifetime.Post.Consumers)
+
+# Calculer les limites avec IQR
+Q1 <- quantile(tab2$Lifetime.Post.Consumers, 0.25)
+Q3 <- quantile(tab2$Lifetime.Post.Consumers, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filtrer les données
+tab2_clean <- tab2[tab2$Lifetime.Post.Consumers >= lower_bound & 
+                     tab2$Lifetime.Post.Consumers <= upper_bound, ]
+
+
+hist(tab2_clean$Lifetime.Post.Consumers, main="Log Transformed Distribution", xlab="Log(Values + 1)")
+
+```
+
+```{r}
+hist(tab2$Lifetime.Engaged.Users)
+
+# Calculer les limites avec IQR
+Q1 <- quantile(tab2$Lifetime.Engaged.Users, 0.25)
+Q3 <- quantile(tab2$Lifetime.Engaged.Users, 0.75)
+IQR <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filtrer les données
+tab2_clean <- tab2[tab2$Lifetime.Engaged.Users >= lower_bound & 
+                     tab2$Lifetime.Engaged.Users <= upper_bound, ]
+
+
+hist(tab2_clean$Lifetime.Engaged.Users, main="Log Transformed Distribution", xlab="Log(Values + 1)")
+
+```
+
+```{r}
+tab3 <- tab2_clean
+```
+
+## 11. Lasso model After the transformation of the target variables :
+
+```{r}
+# Use the function
+plot_lasso_diagnostics(data = tab3, 
+                      inputs = inputs, 
+                      target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post")
+```
+
+```{r}
+# Use the function
+plot_lasso_diagnostics(data = tab3, 
+                      inputs = inputs, 
+                      target = "Lifetime.Post.Consumers")
+```
+
+```{r}
+# Use the function
+plot_lasso_diagnostics(data = tab3, 
+                      inputs = inputs, 
+                      target = "Lifetime.Engaged.Users")
+```
+
+## 12. Elastic Net Model on the new data :
+
+We implemented a comprehensive elastic net regression analysis function.
+The function performs several key tasks: it tries different combinations
+of L1 (lasso) and L2 (ridge) penalties through the alpha parameter
+(ranging from 0 to 1), uses cross-validation to find the optimal lambda
+(penalty strength) for each alpha, and selects the best model based on
+R-squared performance.
+
+The key advantage of this elastic net approach is that it combines the
+benefits of both ridge and lasso regression: it can handle correlated
+predictors (like ridge) while still performing variable selection (like
+lasso).
+
+```{r}
+
+plot_elasticnet_diagnostics <- function(data, inputs, target) {
+  
+    # Prepare data
+    x <- model.matrix(~ . - 1, data = data[, inputs, drop = FALSE])
+    y <- data[[target]]
+    
+    # Try different alpha values
+    alphas <- seq(0, 1, by = 0.1)
+    best_r2 <- -Inf
+    best_alpha <- NULL
+    best_predictions <- NULL
+    
+    for(alpha in alphas) {
+        # Fit model with cross-validation
+        set.seed(123)
+        elasticnet_cv <- cv.glmnet(x, y, alpha = alpha, standardize = TRUE)
+        best_lambda <- elasticnet_cv$lambda.min
+        
+        # Fit model with best lambda
+        elasticnet_model <- glmnet(x, y, alpha = alpha, lambda = best_lambda, standardize = TRUE)
+        
+        # Get predictions
+        current_predictions <- as.vector(predict(elasticnet_model, s = best_lambda, newx = x))
+        current_r2 <- 1 - sum((y - current_predictions)^2) / sum((y - mean(y))^2)
+        
+        if(current_r2 > best_r2) {
+            best_r2 <- current_r2
+            best_alpha <- alpha
+            best_predictions <- current_predictions
+            best_model <- elasticnet_model
+            best_lambda_value <- best_lambda
+        }
+    }
+    
+    # Calculate residuals using best model
+    residuals <- as.vector(y - best_predictions)
+    
+    # Create data frame for plotting
+    plot_df <- data.frame(
+        Actual = as.vector(y),
+        Predicted = best_predictions,
+        Residuals = residuals
+    )
+    
+    # Create plots
+    # 1. QQ Plot
+    p1 <- ggplot(data = plot_df, aes(sample = Residuals)) +
+        stat_qq() +
+        stat_qq_line(color = "red") +
+        theme_minimal() +
+        labs(title = "Normal Q-Q Plot of Residuals")
+    
+    # 2. Residuals vs Actual Values
+    p2 <- ggplot(data = plot_df, aes(x = Actual, y = Residuals)) +
+        geom_point(alpha = 0.5) +
+        geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+        theme_minimal() +
+        labs(title = "Residuals vs Actual Values",
+             x = "Actual Values",
+             y = "Residuals")
+    
+    # 3. Predicted vs Actual Values
+    p3 <- ggplot(data = plot_df, aes(x = Actual, y = Predicted)) +
+        geom_point(alpha = 0.5) +
+        geom_abline(intercept = 0, slope = 1, color = "red") +
+        theme_minimal() +
+        labs(title = "Predicted vs Actual Values",
+             x = "Actual Values",
+             y = "Predicted Values")
+    
+    # Arrange plots
+    library(gridExtra)
+    grid.arrange(p1, p2, p3, ncol = 2)
+    
+    # Print results
+    print(paste("Best alpha:", round(best_alpha, 3)))
+    print(paste("Best lambda:", round(best_lambda_value, 6)))
+    print(paste("R-squared:", round(best_r2, 4)))
+    
+    # Add: Print non-zero coefficients
+    coef_matrix <- as.matrix(coef(best_model, s = best_lambda_value))
+    non_zero_coefs <- coef_matrix[coef_matrix != 0, , drop = FALSE]
+    print("\nNon-zero coefficients:")
+    print(non_zero_coefs)
+    print(paste("\nNumber of variables removed:", sum(coef_matrix == 0)))
+    print(paste("Number of variables kept:", length(non_zero_coefs)))
+    
+    
+    # Return best model parameters
+    return(list(
+        alpha = best_alpha,
+        lambda = best_lambda_value,
+        r_squared = best_r2,
+        model = best_model
+    ))
+}
+
+# Use the function
+result <- plot_elasticnet_diagnostics(data = tab3, 
+                                    inputs = inputs, 
+                                    target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post")
+```
+
+```{r}
+# Use the function
+result <- plot_elasticnet_diagnostics(data = tab3, 
+                                    inputs = inputs, 
+                                    target = "Lifetime.Post.Consumers")
+```
+
+```{r}
+# Use the function
+result <- plot_elasticnet_diagnostics(data = tab3, 
+                                    inputs = inputs, 
+                                    target = "Lifetime.Engaged.Users")
+```
+
+```{r}
+# Initialize a data frame to store the results
+r_squared_results <- data.frame(
+  Target = c(
+    "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post",
+    "Lifetime.Post.Consumers",
+    "Lifetime.Engaged.Users"
+  ),
+  R_Squared = numeric(3)
+)
+
+# Run the function for each target and store the results
+r_squared_results$R_Squared[1] <- plot_elasticnet_diagnostics(
+  data = tab3, 
+  inputs = inputs, 
+  target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post"
+)$r_squared
+
+r_squared_results$R_Squared[2] <- plot_elasticnet_diagnostics(
+  data = tab3, 
+  inputs = inputs, 
+  target = "Lifetime.Post.Consumers"
+)$r_squared
+
+r_squared_results$R_Squared[3] <- plot_elasticnet_diagnostics(
+  data = tab3, 
+  inputs = inputs, 
+  target = "Lifetime.Engaged.Users"
+)$r_squared
+
+# Visualize the R-squared values
+library(ggplot2)
+
+ggplot(r_squared_results, aes(x = Target, y = R_Squared)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(
+    title = "R-squared Values for Elastic Net Models",
+    x = "Target Variables",
+    y = "R-squared"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## 13. Hybrid Model : Stepwise + Elastic Net
+
+-\> Stepwise selection will help us identify the most important
+variables first, reducing dimensionality and potential noise in the
+model.
+
+Then elastic net with those selected variables can help: - Handle any
+remaining correlations between predictors - Provide regularization to
+prevent overfitting - Fine-tune the coefficients of the selected
+variables
+
+-\> We will implement proper model evaluation function for the model
+(stepwise + elastic net regression);
+
+-   Split the data into training (80%) and test (20%) sets using random
+    sampling
+-   Apply the elastic net model (using your previous function) on the
+    training data
+-   Make predictions on the held-out test set
+-   Calculate several key performance metrics: -- R-squared for both
+    training and test sets -- Root Mean Square Error (RMSE) for test set
+    -- Mean Absolute Percentage Error (MAPE)
+-   Creates three diagnostic plots specifically for the test set: -- Q-Q
+    plot to check residual normality -- Residuals vs Actual values --
+    Predicted vs Actual values
+
+```{r}
+# Function to perform stepwise regression
+perform_stepwise <- function(data, inputs, target) {
+    # Create formula for full model
+    full_formula <- as.formula(paste(target, "~", paste(inputs, collapse = " + ")))
+    
+    # Fit initial model with all variables
+    full_model <- lm(full_formula, data = data)
+    
+    # Perform stepwise selection using both directions
+    step_model <- step(full_model, 
+                      direction = "both",    # Try both forward and backward steps
+                      trace = FALSE)         # Set to TRUE if you want to see the steps
+    
+    # Get summary of final model
+    model_summary <- summary(step_model)
+    
+    # Get predictions
+    predictions <- predict(step_model)
+    
+    # Calculate R-squared
+    r_squared <- model_summary$r.squared
+    adj_r_squared <- model_summary$adj.r.squared
+    
+    # Extract selected variables (excluding intercept)
+    selected_vars <- names(coef(step_model))[-1]  # Remove intercept
+    
+    # Create list of final variables
+    final_vars <- list(
+        target = target,
+        selected_variables = selected_vars,
+        removed_variables = setdiff(inputs, selected_vars)
+    )
+    
+    # Print results in a clearer format
+    print("Model Information:")
+    print(paste("Target Variable:", final_vars$target))
+    print("\nSelected Variables:")
+    print(final_vars$selected_variables)
+    print("\nRemoved Variables:")
+    print(final_vars$removed_variables)
+    print(paste("\nR-squared:", round(r_squared, 4)))
+    print(paste("Adjusted R-squared:", round(adj_r_squared, 4)))
+    
+    return(list(
+        model = step_model,
+        r_squared = r_squared,
+        adj_r_squared = adj_r_squared,
+        variables = final_vars
+    ))
+}
+
+# Use the function
+result <- perform_stepwise(data = tab3, 
+                         inputs = inputs,
+                         target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post")
+
+
+# Access the variables list
+selected_vars <- result$variables$selected_variables
+removed_vars <- result$variables$removed_variables
+
+print(selected_vars)
+```
+
+```{r}
+result <- plot_elasticnet_diagnostics(data = tab3, 
+                                    inputs = selected_vars, 
+                                    target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post")
+```
+
+```{r}
+evaluate_elastic_net <- function(data, inputs, target, train_prop = 0.8) {
+    # Create train/test split
+    set.seed(123)
+    n <- nrow(data)
+    train_idx <- sample(1:n, size = floor(train_prop * n))
+    
+    # Split data
+    train_data <- data[train_idx, ]
+    test_data <- data[-train_idx, ]
+    
+    # Fit elastic net on training data
+    elastic_result <- plot_elasticnet_diagnostics(
+        data = train_data, 
+        inputs = inputs, 
+        target = target
+    )
+    
+    # Get predictions for test set
+    x_test <- model.matrix(~ . - 1, data = test_data[, inputs, drop = FALSE])
+    y_test <- test_data[[target]]
+    test_predictions <- predict(elastic_result$model, s = elastic_result$lambda, newx = x_test)
+    
+    # Calculate test metrics
+    test_r2 <- 1 - sum((y_test - test_predictions)^2) / sum((y_test - mean(y_test))^2)
+    test_rmse <- sqrt(mean((y_test - test_predictions)^2))
+    
+    # Create plots for test set
+    test_plot_df <- data.frame(
+        Actual = y_test,
+        Predicted = as.vector(test_predictions),
+        Residuals = y_test - as.vector(test_predictions)
+    )
+    
+    # Create plots
+    p1 <- ggplot(test_plot_df, aes(sample = Residuals)) +
+        stat_qq() +
+        stat_qq_line(color = "red") +
+        theme_minimal() +
+        labs(title = "Normal Q-Q Plot of Test Residuals")
+    
+    p2 <- ggplot(test_plot_df, aes(x = Actual, y = Residuals)) +
+        geom_point(alpha = 0.5) +
+        geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+        theme_minimal() +
+        labs(title = "Test Set: Residuals vs Actual Values")
+    
+    p3 <- ggplot(test_plot_df, aes(x = Actual, y = Predicted)) +
+        geom_point(alpha = 0.5) +
+        geom_abline(intercept = 0, slope = 1, color = "red") +
+        theme_minimal() +
+        labs(title = "Test Set: Predicted vs Actual Values")
+    
+    grid.arrange(p1, p2, p3, ncol = 2)
+    
+    # Print results
+    print("Model Performance:")
+    print(paste("Training R-squared:", round(elastic_result$r_squared, 4)))
+    print(paste("Test R-squared:", round(test_r2, 4)))
+    print(paste("Test RMSE:", round(test_rmse, 4)))
+    
+    mape <- mean(abs((y_test - test_predictions)/y_test)) * 100
+    print(paste("MAPE:", mape, "%"))
+    
+    return(list(
+        train_r2 = elastic_result$r_squared,
+        test_r2 = test_r2,
+        test_rmse = test_rmse,
+        test_predictions = test_predictions,
+        model = elastic_result$model
+    ))
+}
+
+# Use the function
+result <- evaluate_elastic_net(
+    data = tab3, 
+    inputs = selected_vars, 
+    target = "Lifetime.People.who.have.liked.your.Page.and.engaged.with.your.post"
+)
+```
+
+```{r}
+# Use the function
+result <- perform_stepwise(data = tab3, 
+                         inputs = inputs,
+                         target = "Lifetime.Post.Consumers")
+
+
+# Access the variables list
+selected_vars <- result$variables$selected_variables
+removed_vars <- result$variables$removed_variables
+
+print(selected_vars)
+```
+
+```{r}
+# Use the function
+result <- evaluate_elastic_net(
+    data = tab3, 
+    inputs = selected_vars, 
+    target = "Lifetime.Post.Consumers"
+)
+```
+
+```{r}
+# Use the function
+result <- perform_stepwise(data = tab3, 
+                         inputs = inputs,
+                         target = "Lifetime.Engaged.Users")
+
+
+# Access the variables list
+selected_vars <- result$variables$selected_variables
+removed_vars <- result$variables$removed_variables
+
+print(selected_vars)
+```
+
+```{r}
+# Use the function
+result <- evaluate_elastic_net(
+    data = tab3, 
+    inputs = selected_vars, 
+    target = "Lifetime.Engaged.Users"
+)
+```
+
+# V. Conclusion
+
+The substantial RMSE value observed can be attributed to three key
+challenges inherent to social media data:
+
+-   **Viral Unpredictability**: Posts can unexpectedly gain traction due
+    to complex network effects and timing, creating patterns that are
+    fundamentally hard to predict.
+-   **Human Behavior**: Social media engagement is driven by human
+    preferences and emotions, which are naturally unpredictable and can
+    shift rapidly.
+-   **Unmeasurable Factors and Missing Variables**: Critical engagement
+    drivers like content quality, visual appeal, and emotional resonance
+    are qualitative and difficult to quantify in a model.
+
+### Key Insights:
+
+The following target variables demonstrated superior performance in
+predicting social media engagement:
+
+-   **Lifetime People Who Have Liked a Page and Engaged with a Post**\
+-   **Lifetime Post Consumers**\
+-   **Lifetime Engaged Users**
+
+These variables outperformed others because they capture genuine user
+interest through concrete actions (likes, comments, shares) rather than
+passive metrics like impressions or reach.
